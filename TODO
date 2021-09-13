@@ -1,10 +1,13 @@
 Todo:
 
+CHECK ENDIANESS!
+
 ROM loader
 startup stuff
 hardware registers
+Serial register! use this to do blargs tests without ppu
 Implement the instructions
-Serial code.
+
 
 
 

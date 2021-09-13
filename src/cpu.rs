@@ -71,6 +71,11 @@ impl CPU{
         match (op_x, op_y, op_z){
             //NOP, does absolutely nothing
             (0, 0, 0) => {}
+            //various arithmetic operations
+            (2, _, _) => {
+                let reg = CPU::reg_lookup(op_z);
+
+            }
             //JP nn
             (3, 0, 3) => {
                 let nn = self.ram.read_word(self.pc.read_reg());
@@ -83,13 +88,13 @@ impl CPU{
     }
     fn read_narrow_reg(&self, reg: NarrowReg) -> u8{
         match reg{
-            NarrowReg::A => self.af.read_top(),
-            NarrowReg::B => self.bc.read_top(),
-            NarrowReg::C => self.bc.read_bottom(),
-            NarrowReg::D => self.de.read_top(),
-            NarrowReg::E => self.de.read_bottom(),
-            NarrowReg::H => self.hl.read_top(),
-            NarrowReg::L => self.hl.read_bottom(),
+            NarrowReg::A => self.af.read_high(),
+            NarrowReg::B => self.bc.read_high(),
+            NarrowReg::C => self.bc.read_low(),
+            NarrowReg::D => self.de.read_high(),
+            NarrowReg::E => self.de.read_low(),
+            NarrowReg::H => self.hl.read_high(),
+            NarrowReg::L => self.hl.read_low(),
             NarrowReg::HLInd => self.ram.read_byte(self.hl.read_reg())
         }
     }
@@ -107,13 +112,13 @@ impl CPU{
 
     fn write_narrow_reg(&mut self, reg: NarrowReg, val: u8){
         match reg{
-            NarrowReg::A => {self.af.write_top(val);}
-            NarrowReg::B => {self.bc.write_top(val); }
-            NarrowReg::C => {self.bc.write_bottom(val);}
-            NarrowReg::D => {self.de.write_top(val);}
-            NarrowReg::E => {self.de.write_bottom(val);}
-            NarrowReg::H => {self.hl.write_top(val);}
-            NarrowReg::L => {self.hl.write_bottom(val);}
+            NarrowReg::A => {self.af.write_high(val);}
+            NarrowReg::B => {self.bc.write_high(val); }
+            NarrowReg::C => {self.bc.write_low(val);}
+            NarrowReg::D => {self.de.write_high(val);}
+            NarrowReg::E => {self.de.write_low(val);}
+            NarrowReg::H => {self.hl.write_high(val);}
+            NarrowReg::L => {self.hl.write_low(val);}
             NarrowReg::HLInd => {self.ram.write_byte(self.hl.read_reg(), val);}
         }
     }
@@ -139,7 +144,8 @@ impl CPU{
     }
 
     fn set_flag(&mut self, f : Flag, val: bool){
-        match f{ //bitmask out bit then and with boolean
+        match f{
+            //bitmask out bit then and with boolean
             Flag::Z => {self.af.write_reg(self.af.read_reg() & 0xFF7F | ((val as u16) << 7));}
             Flag::N => {self.af.write_reg(self.af.read_reg() & 0xFFBF | ((val as u16) << 6));}
             Flag::H => {self.af.write_reg(self.af.read_reg() & 0xFFDF | ((val as u16) << 5));}
@@ -189,6 +195,43 @@ impl CPU{
         }
     }
 
+    fn arith_lookup_exec(&mut self, index: u8, number: u8){
+        match index{
+            //
+            0 => {
+
+            },
+            1 => {},
+            2 => {},
+            3 => {},
+            4 => {
+                let res = self.read_narrow_reg(NarrowReg::A) & number;
+                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, true);
+                self.set_flag(Flag::C, false);
+                self.write_narrow_reg(NarrowReg::A, res);
+            },
+            5 => {
+                let res = self.read_narrow_reg(NarrowReg::A) ^ number;
+                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.set_flag(Flag::C, false);
+                self.write_narrow_reg(NarrowReg::A, res);
+            },
+            6 => {
+                let res = self.read_narrow_reg(NarrowReg::A) | number;
+                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.set_flag(Flag::C, false);
+                self.write_narrow_reg(NarrowReg::A, res);
+            },
+            7 => {},
+            _ => panic!("Should not be reachable")
+        }
+    }
 }
 
 #[cfg(test)]
