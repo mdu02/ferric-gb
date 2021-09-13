@@ -4,7 +4,7 @@ pub struct Register {
 
 impl Register {
     pub fn new(value: u16) -> Register {
-        let mut reg: Register = Register{value };
+        let mut reg: Register = Register{value};
         reg
     }
 
@@ -30,6 +30,9 @@ impl Register {
 
     pub fn write_bottom(&mut self, val: u8) {
         self.value = self.value & 0xFF00 | (val as u16);
+    }
+    pub fn next_instruction(&mut self) { //do i REALLY need to test this...
+        self.value += 1;
     }
 
 }
