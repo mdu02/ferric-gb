@@ -1,5 +1,4 @@
 use std::fs::read;
-use std::num::Wrapping;
 
 pub struct RAM {
     memory: [u8; 0x10000],
@@ -35,13 +34,11 @@ impl RAM {
         }
 
         //checksum
-        let mut cs: Wrapping<u8> = Wrapping(0);
+        let mut cs: u8 = 0;
         for i in 0x134..0x14D{
-            unsafe {
-                cs = cs - Wrapping(self.read_byte(i)) - Wrapping(1)
-            }
+            cs = cs.wrapping_sub(self.read_byte(i)).wrapping_sub(1);
         }
-        self.header_checksum = cs.0; //unwraps
+        self.header_checksum = cs;
     }
 
     pub fn core_dump(&self) {

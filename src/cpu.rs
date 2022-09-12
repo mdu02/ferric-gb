@@ -61,7 +61,7 @@ impl CPU{
         //nibbles
         let op_x = (instruction & 0o300) >> 6;
         let op_y = (instruction & 0o070) >> 3;
-        let op_z = (instruction & 0o007);
+        let op_z = instruction & 0o007;
 
         //commonly encountered expressions
         let op_p = op_y >> 1;
@@ -71,10 +71,43 @@ impl CPU{
         match (op_x, op_y, op_z){
             //NOP, does absolutely nothing
             (0, 0, 0) => {}
+            //STOP,
+            (0, 0, 0) => {}
+            // CPL - ComPLement Accumulator
+            (0, 5, 7) => {
+                self.set_flag(Flag::N, true);
+                self.set_flag(Flag::H, true);
+                let acc_compl = 0xFF - self.read_narrow_reg(NarrowReg::A);
+                self.write_narrow_reg(NarrowReg::A, acc_compl);
+            }
+            // SCF - SetCarryFlag
+            (0, 6, 7) => {
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.set_flag(Flag::C, true)
+            }
+            // CCF - ComplementCarryFlag
+            (0, 7, 7) => {
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.set_flag(Flag::C, !self.get_flag(Flag::C))
+            }
+            // HALT
+            (1, 6, 6) => {
+                todo!();
+            }
+            (1, _, _) => {
+                let ry = CPU::reg_lookup(op_y);
+                let rz = CPU::reg_lookup(op_z);
+                CPU::write_narrow_reg(self, ry, CPU::read_narrow_reg(self, rz))
+            }
+            // LD from one register to another
+
             //various arithmetic operations
             (2, _, _) => {
                 let reg = CPU::reg_lookup(op_z);
-
+                let rz = CPU::read_narrow_reg(self, reg);
+                CPU::arith_lookup_exec(self, op_y, rz)
             }
             //JP nn
             (3, 0, 3) => {
@@ -197,14 +230,47 @@ impl CPU{
 
     fn arith_lookup_exec(&mut self, index: u8, number: u8){
         match index{
-            //
-            0 => {
-
+            0 => { // ADD
+                let a_val = self.read_narrow_reg(NarrowReg::A);
+                let res = a_val.wrapping_add(number);
+                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, ((a_val & 0xF) + (number & 0xF)) > 0xF); // take lowest 4 bits, add, see if overflow
+                let carry_flag = ((a_val as u16 & 0xFF) + (number as u16 & 0xFF)) > 0xFF; //cast to u16 and similar as above
+                self.set_flag(Flag::C, carry_flag);
+                self.write_narrow_reg(NarrowReg::A, res);
             },
-            1 => {},
-            2 => {},
-            3 => {},
-            4 => {
+            1 => { // ADC
+                let a_val = self.read_narrow_reg(NarrowReg::A);
+                let c_bit = self.get_flag(Flag::C) as u8;
+                let res = a_val.wrapping_add(number).wrapping_add(c_bit);
+                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, ((a_val & 0xF) + (number & 0xFF) + c_bit) > 0xF); //as above
+                let carry_flag = ((a_val as u16 & 0xFF) + (number as u16 & 0xFF) + c_bit as u16) > 0xFF;
+                self.set_flag(Flag::C, carry_flag);
+                self.write_narrow_reg(NarrowReg::A, res);
+            },
+            2 => { // SUB
+                let a_val = self.read_narrow_reg(NarrowReg::A);
+                let res = a_val.wrapping_sub(number);
+                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::N, true);
+                self.set_flag(Flag::H, (a_val & 0xF) < (number & 0xF)); //underflow simply if one is smaller than other
+                self.set_flag(Flag::C, a_val < number);
+                self.write_narrow_reg(NarrowReg::A, res);
+            },
+            3 => { // SUBC
+                let a_val = self.read_narrow_reg(NarrowReg::A);
+                let c_bit = self.get_flag(Flag::C) as u8;
+                let res = a_val.wrapping_sub(number).wrapping_sub(c_bit);
+                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::N, true);
+                self.set_flag(Flag::H, (a_val & 0xF) < ((number & 0xF) + 1));
+                self.set_flag(Flag::C, (a_val as u16) < (number as u16 + c_bit as u16));
+                self.write_narrow_reg(NarrowReg::A, res);
+            },
+            4 => { // AND
                 let res = self.read_narrow_reg(NarrowReg::A) & number;
                 self.set_flag(Flag::Z, if res == 0 {true} else {false});
                 self.set_flag(Flag::N, false);
@@ -212,7 +278,7 @@ impl CPU{
                 self.set_flag(Flag::C, false);
                 self.write_narrow_reg(NarrowReg::A, res);
             },
-            5 => {
+            5 => { // XOR
                 let res = self.read_narrow_reg(NarrowReg::A) ^ number;
                 self.set_flag(Flag::Z, if res == 0 {true} else {false});
                 self.set_flag(Flag::N, false);
@@ -220,7 +286,7 @@ impl CPU{
                 self.set_flag(Flag::C, false);
                 self.write_narrow_reg(NarrowReg::A, res);
             },
-            6 => {
+            6 => { // OR
                 let res = self.read_narrow_reg(NarrowReg::A) | number;
                 self.set_flag(Flag::Z, if res == 0 {true} else {false});
                 self.set_flag(Flag::N, false);
@@ -228,7 +294,13 @@ impl CPU{
                 self.set_flag(Flag::C, false);
                 self.write_narrow_reg(NarrowReg::A, res);
             },
-            7 => {},
+            7 => { // CP
+                let a_val = self.read_narrow_reg(NarrowReg::A);
+                self.set_flag(Flag::Z, a_val == number);
+                self.set_flag(Flag::N, true);
+                self.set_flag(Flag::H, (a_val & 0xF) < (number & 0xF)); //underflow simply if one is smaller than other
+                self.set_flag(Flag::C, a_val < number);
+            },
             _ => panic!("Should not be reachable")
         }
     }
@@ -261,5 +333,145 @@ mod tests {
         let mut cpu = CPU::new(ram);
         cpu.cycle();
         assert_eq!(0xACDE, cpu.pc.read_reg());
+    }
+
+    #[test]
+    fn add_reg_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o201);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x88);
+        cpu.write_narrow_reg(NarrowReg::C, 0x88);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::Z));
+        assert_eq!(false, cpu.get_flag(Flag::N));
+        assert_eq!(true, cpu.get_flag(Flag::H));
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0x10, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn adc_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o211);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x88);
+        cpu.write_narrow_reg(NarrowReg::C, 0x87);
+        cpu.set_flag(Flag::C, true);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::Z));
+        assert_eq!(false, cpu.get_flag(Flag::N));
+        assert_eq!(true, cpu.get_flag(Flag::H));
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0x10, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn sub_reg_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o221);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x88);
+        cpu.write_narrow_reg(NarrowReg::C, 0x89);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::Z));
+        assert_eq!(true, cpu.get_flag(Flag::N));
+        assert_eq!(true, cpu.get_flag(Flag::H));
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0xFF, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn subc_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o231);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x88);
+        cpu.write_narrow_reg(NarrowReg::C, 0x88);
+        cpu.set_flag(Flag::C, true);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::Z));
+        assert_eq!(true, cpu.get_flag(Flag::N));
+        assert_eq!(true, cpu.get_flag(Flag::H));
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0xFF, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn and_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o241);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x9A);
+        cpu.write_narrow_reg(NarrowReg::C, 0x65);
+        cpu.cycle();
+        assert_eq!(true, cpu.get_flag(Flag::Z));
+        assert_eq!(false, cpu.get_flag(Flag::N));
+        assert_eq!(true, cpu.get_flag(Flag::H));
+        assert_eq!(false, cpu.get_flag(Flag::C));
+        assert_eq!(0x00, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn xor_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o251);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x9A);
+        cpu.write_narrow_reg(NarrowReg::C, 0x65);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::Z));
+        assert_eq!(false, cpu.get_flag(Flag::N));
+        assert_eq!(false, cpu.get_flag(Flag::H));
+        assert_eq!(false, cpu.get_flag(Flag::C));
+        assert_eq!(0xFF, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn or_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o261);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x9A);
+        cpu.write_narrow_reg(NarrowReg::C, 0x33);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::Z));
+        assert_eq!(false, cpu.get_flag(Flag::N));
+        assert_eq!(false, cpu.get_flag(Flag::H));
+        assert_eq!(false, cpu.get_flag(Flag::C));
+        assert_eq!(0xBB, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn cp_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o271);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x3A);
+        cpu.write_narrow_reg(NarrowReg::C, 0x3B);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::Z));
+        assert_eq!(true, cpu.get_flag(Flag::N));
+        assert_eq!(true, cpu.get_flag(Flag::H));
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0x3A, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn hl_ind_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o206);
+        ram.write_byte(0xC000, 0x88);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x88);
+        cpu.write_wide_reg(WideReg::HL, 0xC000);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::Z));
+        assert_eq!(false, cpu.get_flag(Flag::N));
+        assert_eq!(true, cpu.get_flag(Flag::H));
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0x10, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn ld_reg_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o101);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::B, 0xAB);
+        cpu.write_narrow_reg(NarrowReg::C, 0xCD);
+        cpu.cycle();
+        assert_eq!(0xCD, cpu.read_narrow_reg(NarrowReg::B));
     }
 }
