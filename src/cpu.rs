@@ -1,6 +1,7 @@
 use crate::register::Register;
 use crate::ram::RAM;
 
+#[derive(Clone, Copy)]
 pub enum WideReg {
     AF,
     BC,
@@ -10,6 +11,7 @@ pub enum WideReg {
     PC
 }
 
+#[derive(Clone, Copy)]
 pub enum NarrowReg {
     A,
     B,
@@ -69,24 +71,115 @@ impl CPU{
 
         //decode/exec
         match (op_x, op_y, op_z){
-            //NOP, does absolutely nothing
+            // NOP, does absolutely nothing
             (0, 0, 0) => {}
-            //STOP,
-            (0, 0, 0) => {}
-            // CPL - ComPLement Accumulator
+
+            // INC/DEC Wide
+            (0, _, 3) => {
+                if op_q == 0 {
+                    let reg = CPU::wide_reg_lookup_1(op_p);
+                    let ry = self.read_wide_reg(reg);
+                    self.write_wide_reg(reg, ry.wrapping_add(1));
+                } else {
+                    let reg = CPU::wide_reg_lookup_1(op_p);
+                    let ry = self.read_wide_reg(reg);
+                    self.write_wide_reg(reg, ry.wrapping_sub(1));
+                }
+            }
+
+            // INC Narrow
+            (0, _, 4) => {
+                let reg = CPU::reg_lookup(op_y);
+                let ry = self.read_narrow_reg(reg);
+                self.set_flag(Flag::N, false);
+                if (ry & 0xF) == 0xF {
+                    self.set_flag(Flag::H, true);
+                } else {
+                    self.set_flag(Flag::H, false)
+                }
+                if ry == 0xFF {
+                    self.set_flag(Flag::Z, true);
+                    self.write_narrow_reg(reg, 0);
+                } else {
+                    self.set_flag(Flag::Z, false);
+                    self.write_narrow_reg(reg, ry + 1);
+                }
+            }
+
+            // DEC Narrow
+            (0, _, 5) => {
+                let reg = CPU::reg_lookup(op_y);
+                let ry = self.read_narrow_reg(reg);
+                self.set_flag(Flag::N, true);
+                if (ry & 0xF) == 0 {
+                    self.set_flag(Flag::H, true);
+                } else {
+                    self.set_flag(Flag::H, false)
+                }
+                if ry == 1 {
+                    self.set_flag(Flag::Z, true)
+                } else {
+                    self.set_flag(Flag::Z, false);
+                }
+                self.write_narrow_reg(reg, ry.wrapping_sub(1));
+            }
+
+            // LD 8-bit immediate
+            (0, _, 6) => {
+                let reg = CPU::reg_lookup(op_y);
+                //fetch
+                let curr_address = self.pc.read_reg();
+                let n = self.ram.read_byte( curr_address);
+                self.pc.next_instruction();
+                self.write_narrow_reg(reg, n);
+            }
+
+            // RLCA, RotateLeftCarryA
+            (0, 0, 7) => {
+                let a_val = self.read_narrow_reg(NarrowReg::A);
+                let left_bit = (a_val & 0x80) != 0;
+                self.set_flag(Flag::C, left_bit);
+                self.write_narrow_reg(NarrowReg::A, (a_val << 1) + left_bit as u8);
+            }
+            // RRCA, RotateRightCarryA
+            (0, 1, 7) => {
+                let a_val = self.read_narrow_reg(NarrowReg::A);
+                let right_bit = (a_val & 1) != 0;
+                self.set_flag(Flag::C, right_bit);
+                self.write_narrow_reg(NarrowReg::A, (a_val >> 1) + (0x80 * right_bit as u8));
+            }
+            // RLA, RotateLeftA
+            (0, 2, 7) => {
+                let a_val = self.read_narrow_reg(NarrowReg::A);
+                let c_bit = self.get_flag(Flag::C);
+                self.set_flag(Flag::C, (a_val & 0x80) != 0); // left bit to C
+                self.write_narrow_reg(NarrowReg::A, (a_val << 1) + c_bit as u8);
+            }
+            // RRA, RotateRightA
+            (0, 3, 7) => {
+                let a_val = self.read_narrow_reg(NarrowReg::A);
+                let c_bit = self.get_flag(Flag::C);
+                self.set_flag(Flag::C, (a_val & 1) != 0); // right bit to C
+                self.write_narrow_reg(NarrowReg::A, (a_val >> 1) + (0x80 * c_bit as u8));
+            }
+            //DAA (the DEVIL addition adjustment)
+            (0, 4, 7) => {
+                todo!();
+            }
+            // CPL - ComPLement Accumulator (needs test)
             (0, 5, 7) => {
                 self.set_flag(Flag::N, true);
                 self.set_flag(Flag::H, true);
                 let acc_compl = 0xFF - self.read_narrow_reg(NarrowReg::A);
-                self.write_narrow_reg(NarrowReg::A, acc_compl);
+                write_narrow_reg(NarrowReg::A, acc_compl);
             }
-            // SCF - SetCarryFlag
+            // SCF - SetCarryFlag (needs test)
             (0, 6, 7) => {
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, false);
                 self.set_flag(Flag::C, true)
             }
-            // CCF - ComplementCarryFlag
+            // CCF - ComplementCarryFlag (needs test)
             (0, 7, 7) => {
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, false);
@@ -96,17 +189,17 @@ impl CPU{
             (1, 6, 6) => {
                 todo!();
             }
+            // LD from one register to another
             (1, _, _) => {
                 let ry = CPU::reg_lookup(op_y);
                 let rz = CPU::reg_lookup(op_z);
-                CPU::write_narrow_reg(self, ry, CPU::read_narrow_reg(self, rz))
+                self.write_narrow_reg(ry, CPU::read_narrow_reg(self, rz))
             }
-            // LD from one register to another
 
             //various arithmetic operations
             (2, _, _) => {
                 let reg = CPU::reg_lookup(op_z);
-                let rz = CPU::read_narrow_reg(self, reg);
+                let rz = self.read_narrow_reg(reg);
                 CPU::arith_lookup_exec(self, op_y, rz)
             }
             //JP nn
@@ -242,11 +335,11 @@ impl CPU{
             },
             1 => { // ADC
                 let a_val = self.read_narrow_reg(NarrowReg::A);
-                let c_bit = self.get_flag(Flag::C) as u8;
-                let res = a_val.wrapping_add(number).wrapping_add(c_bit);
+                let c_bit = self.get_flag(Flag::C);
+                let res = a_val.wrapping_add(number).wrapping_add(c_bit as u8);
                 self.set_flag(Flag::Z, if res == 0 {true} else {false});
                 self.set_flag(Flag::N, false);
-                self.set_flag(Flag::H, ((a_val & 0xF) + (number & 0xFF) + c_bit) > 0xF); //as above
+                self.set_flag(Flag::H, ((a_val & 0xF) + (number & 0xFF) + c_bit as u8) > 0xF); //as above
                 let carry_flag = ((a_val as u16 & 0xFF) + (number as u16 & 0xFF) + c_bit as u16) > 0xFF;
                 self.set_flag(Flag::C, carry_flag);
                 self.write_narrow_reg(NarrowReg::A, res);
@@ -262,8 +355,8 @@ impl CPU{
             },
             3 => { // SUBC
                 let a_val = self.read_narrow_reg(NarrowReg::A);
-                let c_bit = self.get_flag(Flag::C) as u8;
-                let res = a_val.wrapping_sub(number).wrapping_sub(c_bit);
+                let c_bit = self.get_flag(Flag::C);
+                let res = a_val.wrapping_sub(number).wrapping_sub(c_bit as u8);
                 self.set_flag(Flag::Z, if res == 0 {true} else {false});
                 self.set_flag(Flag::N, true);
                 self.set_flag(Flag::H, (a_val & 0xF) < ((number & 0xF) + 1));
@@ -398,42 +491,42 @@ mod tests {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o241);
         let mut cpu = CPU::new(ram);
-        cpu.write_narrow_reg(NarrowReg::A, 0x9A);
-        cpu.write_narrow_reg(NarrowReg::C, 0x65);
+        cpu.write_narrow_reg(NarrowReg::A, 0b10011010);
+        cpu.write_narrow_reg(NarrowReg::C, 0b01100101);
         cpu.cycle();
         assert_eq!(true, cpu.get_flag(Flag::Z));
         assert_eq!(false, cpu.get_flag(Flag::N));
         assert_eq!(true, cpu.get_flag(Flag::H));
         assert_eq!(false, cpu.get_flag(Flag::C));
-        assert_eq!(0x00, cpu.read_narrow_reg(NarrowReg::A));
+        assert_eq!(0, cpu.read_narrow_reg(NarrowReg::A));
     }
     #[test]
     fn xor_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o251);
         let mut cpu = CPU::new(ram);
-        cpu.write_narrow_reg(NarrowReg::A, 0x9A);
-        cpu.write_narrow_reg(NarrowReg::C, 0x65);
+        cpu.write_narrow_reg(NarrowReg::A, 0b10011010);
+        cpu.write_narrow_reg(NarrowReg::C, 0b01100101);
         cpu.cycle();
         assert_eq!(false, cpu.get_flag(Flag::Z));
         assert_eq!(false, cpu.get_flag(Flag::N));
         assert_eq!(false, cpu.get_flag(Flag::H));
         assert_eq!(false, cpu.get_flag(Flag::C));
-        assert_eq!(0xFF, cpu.read_narrow_reg(NarrowReg::A));
+        assert_eq!(0b11111111, cpu.read_narrow_reg(NarrowReg::A));
     }
     #[test]
     fn or_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o261);
         let mut cpu = CPU::new(ram);
-        cpu.write_narrow_reg(NarrowReg::A, 0x9A);
-        cpu.write_narrow_reg(NarrowReg::C, 0x33);
+        cpu.write_narrow_reg(NarrowReg::A, 0b10011010);
+        cpu.write_narrow_reg(NarrowReg::C, 0b00110011);
         cpu.cycle();
         assert_eq!(false, cpu.get_flag(Flag::Z));
         assert_eq!(false, cpu.get_flag(Flag::N));
         assert_eq!(false, cpu.get_flag(Flag::H));
         assert_eq!(false, cpu.get_flag(Flag::C));
-        assert_eq!(0xBB, cpu.read_narrow_reg(NarrowReg::A));
+        assert_eq!(0b10111011, cpu.read_narrow_reg(NarrowReg::A));
     }
     #[test]
     fn cp_test() {
@@ -473,5 +566,86 @@ mod tests {
         cpu.write_narrow_reg(NarrowReg::C, 0xCD);
         cpu.cycle();
         assert_eq!(0xCD, cpu.read_narrow_reg(NarrowReg::B));
+    }
+
+    #[test]
+    fn rlca_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o007);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0b00100011);
+        cpu.set_flag(Flag::C, true);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::C));
+        assert_eq!(0b01000110, cpu.read_narrow_reg(NarrowReg::A));
+    }
+
+    #[test]
+    fn rrca_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o017);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0b00100011);
+        cpu.set_flag(Flag::C, false);
+        cpu.cycle();
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0b10010001, cpu.read_narrow_reg(NarrowReg::A));
+    }
+
+    #[test]
+    fn rla_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o027);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0b10100011);
+        cpu.set_flag(Flag::C, false);
+        cpu.cycle();
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0b01000110, cpu.read_narrow_reg(NarrowReg::A));
+    }
+
+    #[test]
+    fn rra_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o037);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0b10100011);
+        cpu.set_flag(Flag::C, false);
+        cpu.cycle();
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0b01010001, cpu.read_narrow_reg(NarrowReg::A));
+    }
+    #[test]
+    fn cpl_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o057);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0b10100011);
+        cpu.cycle();
+        assert_eq!(0b01011100, cpu.read_narrow_reg(NarrowReg::A));
+    }
+
+    #[test]
+    fn ccf_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o067);
+        let mut cpu = CPU::new(ram);
+        cpu.set_flag(Flag::C, true);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::N));
+        assert_eq!(false, cpu.get_flag(Flag::H));
+        assert_eq!(false, cpu.get_flag(Flag::C));
+    }
+
+    #[test]
+    fn scf_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o077);
+        let mut cpu = CPU::new(ram);
+        cpu.set_flag(Flag::C, false);
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::N));
+        assert_eq!(false, cpu.get_flag(Flag::H));
+        assert_eq!(true, cpu.get_flag(Flag::C));
     }
 }
