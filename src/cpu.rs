@@ -74,13 +74,79 @@ impl CPU{
             // NOP, does absolutely nothing
             (0, 0, 0) => {}
 
+            // LD (nn), SP load intermediate stack pointer
+            (0, 1, 0) => {
+                //fetch
+                let curr_address = self.pc.read_reg();
+                let nn = self.ram.read_word( curr_address);
+                self.pc.next_instruction();
+                self.pc.next_instruction();
+                let sp = self.read_wide_reg(WideReg::SP);
+                self.ram.write_byte(nn, (sp & 0xFF) as u8);
+                self.ram.write_byte(nn + 1, (sp >> 8) as u8);
+            }
+
+            // STOP
+            (0, 2, 0) => { todo!()}
+
+            // JR d
+            (0, 3, 0) => {
+                //fetch
+                let curr_address = self.pc.read_reg();
+                let e8 = self.ram.read_byte( curr_address);
+                self.pc.next_instruction();
+                let pc = self.read_wide_reg(WideReg::PC);
+                self.write_wide_reg(WideReg::PC, pc + e8);
+            }
+
+            // JR condition, d
+            (0, _, 0) => {
+                //fetch
+                let curr_address = self.pc.read_reg();
+                let e8 = self.ram.read_byte(curr_address);
+                self.pc.next_instruction();
+                if self.condition_lookup(op_y - 4) {
+                    let pc = self.read_wide_reg(WideReg::PC);
+                    self.write_wide_reg(WideReg::PC, pc + e8);
+                }
+            }
+
+
+            // LD Wide and ADD HL
+            (0, _, 1) => {
+                if op_q == 0 { // LD Wide
+                    let reg = CPU::wide_reg_lookup_1(op_p);
+                    //fetch
+                    let curr_address = self.pc.read_reg();
+                    let nn = self.ram.read_word( curr_address);
+                    self.pc.next_instruction();
+                    self.pc.next_instruction();
+                    self.write_wide_reg(reg, nn);
+                } else { // ADD HL
+                    let hl_val = self.read_wide_reg(WideReg::HL);
+                    let reg = CPU::wide_reg_lookup_1(op_p);
+                    let rpp = self.read_wide_reg(reg);
+                    let res = hl_val.wrapping_add(rpp);
+                    self.set_flag(Flag::N, false);
+                    self.set_flag(Flag::H, ((hl_val & 0xFFF) + (rpp & 0xFFF)) > 0xFFF); // take lowest 12 bits, add, see if overflow
+                    let carry_flag = ((hl_val as u32 & 0xFFFF) + (rpp as u32 & 0xFFFF)) > 0xFFFF; //cast to u16 and similar as above
+                    self.set_flag(Flag::C, carry_flag);
+                    self.write_wide_reg(WideReg::HL, res);
+                }
+            }
+
+            // Indirect Loads
+            (0, _, 2) => {
+                
+            }
+
             // INC/DEC Wide
             (0, _, 3) => {
-                if op_q == 0 {
+                if op_q == 0 { //INC
                     let reg = CPU::wide_reg_lookup_1(op_p);
                     let ry = self.read_wide_reg(reg);
                     self.write_wide_reg(reg, ry.wrapping_add(1));
-                } else {
+                } else { //DEC
                     let reg = CPU::wide_reg_lookup_1(op_p);
                     let ry = self.read_wide_reg(reg);
                     self.write_wide_reg(reg, ry.wrapping_sub(1));
@@ -171,7 +237,7 @@ impl CPU{
                 self.set_flag(Flag::N, true);
                 self.set_flag(Flag::H, true);
                 let acc_compl = 0xFF - self.read_narrow_reg(NarrowReg::A);
-                write_narrow_reg(NarrowReg::A, acc_compl);
+                self.write_narrow_reg(NarrowReg::A, acc_compl);
             }
             // SCF - SetCarryFlag (needs test)
             (0, 6, 7) => {
@@ -630,6 +696,8 @@ mod tests {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o067);
         let mut cpu = CPU::new(ram);
+        cpu.set_flag(Flag::N, true);
+        cpu.set_flag(Flag::H, true);
         cpu.set_flag(Flag::C, true);
         cpu.cycle();
         assert_eq!(false, cpu.get_flag(Flag::N));
@@ -642,10 +710,74 @@ mod tests {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o077);
         let mut cpu = CPU::new(ram);
+        cpu.set_flag(Flag::N, true);
+        cpu.set_flag(Flag::H, true);
         cpu.set_flag(Flag::C, false);
         cpu.cycle();
         assert_eq!(false, cpu.get_flag(Flag::N));
         assert_eq!(false, cpu.get_flag(Flag::H));
         assert_eq!(true, cpu.get_flag(Flag::C));
+    }
+
+    #[test]
+    fn inc_wide_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o003);
+        let mut cpu = CPU::new(ram);
+        cpu.write_wide_reg(WideReg::BC, 0xABCD);
+        cpu.cycle();
+        assert_eq!(0xABCE, cpu.read_wide_reg(WideReg::BC));
+    }
+
+    #[test]
+    fn dec_wide_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o013);
+        let mut cpu = CPU::new(ram);
+        cpu.write_wide_reg(WideReg::BC, 0xABCD);
+        cpu.cycle();
+        assert_eq!(0xABCC, cpu.read_wide_reg(WideReg::BC));
+    }
+
+    #[test]
+    fn inc_narrow_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o004);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::B, 0xFF);
+        cpu.set_flag(Flag::N, true);
+        cpu.set_flag(Flag::H, false);
+        cpu.set_flag(Flag::Z, false);
+        cpu.cycle();
+        assert_eq!(0x00, cpu.read_narrow_reg(NarrowReg::B));
+        assert_eq!(false, cpu.get_flag(Flag::N));
+        assert_eq!(true, cpu.get_flag(Flag::H));
+        assert_eq!(true, cpu.get_flag(Flag::Z));
+    }
+
+    #[test]
+    fn dec_narrow_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o005);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::B, 0xD0);
+        cpu.set_flag(Flag::N, false);
+        cpu.set_flag(Flag::H, false);
+        cpu.set_flag(Flag::Z, true);
+        cpu.cycle();
+        assert_eq!(0xCF, cpu.read_narrow_reg(NarrowReg::B));
+        assert_eq!(true, cpu.get_flag(Flag::N));
+        assert_eq!(true, cpu.get_flag(Flag::H));
+        assert_eq!(false, cpu.get_flag(Flag::Z));
+    }
+
+    #[test]
+    fn ld_narrow_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o006);
+        ram.write_byte(0x101, 0xAB);
+        let mut cpu = CPU::new(ram);
+        cpu.cycle();
+        assert_eq!(0xAB, cpu.read_narrow_reg(NarrowReg::B));
     }
 }
