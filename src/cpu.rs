@@ -137,7 +137,32 @@ impl CPU{
 
             // Indirect Loads
             (0, _, 2) => {
-                
+                let reg = match op_p {
+                    0 => {
+                        self.read_wide_reg(WideReg::BC)
+                    }
+                    1 => {
+                        self.read_wide_reg(WideReg::DE)
+                    }
+                    2 => {
+                        let reg_before = self.read_wide_reg(WideReg::HL);
+                        self.write_wide_reg(WideReg::HL, reg_before.wrapping_add(1));
+                        reg_before
+                    }
+                    3 => {
+                        let reg_before = self.read_wide_reg(WideReg::HL);
+                        self.write_wide_reg(WideReg::HL, reg_before.wrapping_sub(1));
+                        reg_before
+                    }
+                    _ => panic!("Should not be reachable")
+                };
+                if op_q == 0 {
+                    let a_val = self.read_narrow_reg(NarrowReg::A);
+                    self.ram.write_byte(reg, a_val);
+                } else {
+                    let reg_ind = self.ram.read_byte(reg);
+                    self.write_narrow_reg(NarrowReg::A, reg_ind);
+                }
             }
 
             // INC/DEC Wide
