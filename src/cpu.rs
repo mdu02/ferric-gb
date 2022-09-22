@@ -32,6 +32,7 @@ pub enum Flag {
 
 pub struct CPU {
     ram: RAM,
+    ime: bool,
     af: Register,
     bc: Register,
     de: Register,
@@ -45,6 +46,7 @@ impl CPU{
         let checksum_zero = ram.header_checksum == 0;
         let mut cpu = CPU{
             ram,
+            ime: false,
             af: if checksum_zero {Register::new(0x01_80)} else {Register::new(0x01_B0)},
             bc: Register::new(0x0013),
             de: Register::new(0x00D8),
@@ -56,9 +58,7 @@ impl CPU{
     }
     pub fn cycle(&mut self){
         //fetch
-        let curr_address = self.pc.read_reg();
-        let instruction = self.ram.read_byte(curr_address);
-        self.pc.next_instruction();
+        let instruction = self.immediate_narrow();
 
         //nibbles
         let op_x = (instruction & 0o300) >> 6;
@@ -77,10 +77,7 @@ impl CPU{
             // LD (nn), SP load intermediate stack pointer
             (0, 1, 0) => {
                 //fetch
-                let curr_address = self.pc.read_reg();
-                let nn = self.ram.read_word( curr_address);
-                self.pc.next_instruction();
-                self.pc.next_instruction();
+                let nn = self.immediate_wide();
                 let sp = self.read_wide_reg(WideReg::SP);
                 self.ram.write_byte(nn, (sp & 0xFF) as u8);
                 self.ram.write_byte(nn + 1, (sp >> 8) as u8);
@@ -92,35 +89,26 @@ impl CPU{
             // JR d
             (0, 3, 0) => {
                 //fetch
-                let curr_address = self.pc.read_reg();
-                let e8 = self.ram.read_byte( curr_address);
-                self.pc.next_instruction();
+                let e8 = self.immediate_narrow();
                 let pc = self.read_wide_reg(WideReg::PC);
                 self.write_wide_reg(WideReg::PC, pc + e8);
             }
 
             // JR condition, d
-            (0, _, 0) => {
+            (0, 4..=7, 0) => {
                 //fetch
-                let curr_address = self.pc.read_reg();
-                let e8 = self.ram.read_byte(curr_address);
-                self.pc.next_instruction();
+                let e8 = self.immediate_narrow();
                 if self.condition_lookup(op_y - 4) {
                     let pc = self.read_wide_reg(WideReg::PC);
                     self.write_wide_reg(WideReg::PC, pc + e8);
                 }
             }
-
-
             // LD Wide and ADD HL
             (0, _, 1) => {
                 if op_q == 0 { // LD Wide
                     let reg = CPU::wide_reg_lookup_1(op_p);
                     //fetch
-                    let curr_address = self.pc.read_reg();
-                    let nn = self.ram.read_word( curr_address);
-                    self.pc.next_instruction();
-                    self.pc.next_instruction();
+                    let nn = self.immediate_wide();
                     self.write_wide_reg(reg, nn);
                 } else { // ADD HL
                     let hl_val = self.read_wide_reg(WideReg::HL);
@@ -219,9 +207,7 @@ impl CPU{
             (0, _, 6) => {
                 let reg = CPU::reg_lookup(op_y);
                 //fetch
-                let curr_address = self.pc.read_reg();
-                let n = self.ram.read_byte( curr_address);
-                self.pc.next_instruction();
+                let n = self.immediate_narrow();
                 self.write_narrow_reg(reg, n);
             }
 
@@ -253,9 +239,29 @@ impl CPU{
                 self.set_flag(Flag::C, (a_val & 1) != 0); // right bit to C
                 self.write_narrow_reg(NarrowReg::A, (a_val >> 1) + (0x80 * c_bit as u8));
             }
-            //DAA (the DEVIL addition adjustment)
+            //DAA (the DEVIL addition adjustment) // based on nesdev forum post
             (0, 4, 7) => {
-                todo!();
+                let add = !self.get_flag(Flag::N);
+                let mut a_val = self.read_narrow_reg(NarrowReg::A);
+                if add {
+                    if self.get_flag(Flag::C) || (a_val > 0x99) {
+                        a_val = a_val.wrapping_add(0x60);
+                        self.set_flag(Flag::C, true);
+                    }
+                    if self.get_flag(Flag::H) || ((a_val & 0x0F) > 0x09) {
+                        a_val = a_val.wrapping_add(0x06);
+                    }
+                } else {
+                    if self.get_flag(Flag::C) {
+                        a_val = a_val.wrapping_sub(0x60);
+                    }
+                    if self.get_flag(Flag::H) {
+                        a_val = a_val.wrapping_sub(0x06);
+                    }
+                }
+                self.write_narrow_reg(NarrowReg::A, a_val);
+                self.set_flag(Flag::Z, a_val == 0);
+                self.set_flag(Flag::H, false);
             }
             // CPL - ComPLement Accumulator (needs test)
             (0, 5, 7) => {
@@ -268,13 +274,13 @@ impl CPU{
             (0, 6, 7) => {
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, false);
-                self.set_flag(Flag::C, true)
+                self.set_flag(Flag::C, true);
             }
             // CCF - ComplementCarryFlag (needs test)
             (0, 7, 7) => {
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, false);
-                self.set_flag(Flag::C, !self.get_flag(Flag::C))
+                self.set_flag(Flag::C, !self.get_flag(Flag::C));
             }
             // HALT
             (1, 6, 6) => {
@@ -284,19 +290,89 @@ impl CPU{
             (1, _, _) => {
                 let ry = CPU::reg_lookup(op_y);
                 let rz = CPU::reg_lookup(op_z);
-                self.write_narrow_reg(ry, CPU::read_narrow_reg(self, rz))
+                self.write_narrow_reg(ry, CPU::read_narrow_reg(self, rz));
             }
 
             //various arithmetic operations
             (2, _, _) => {
                 let reg = CPU::reg_lookup(op_z);
                 let rz = self.read_narrow_reg(reg);
-                CPU::arith_lookup_exec(self, op_y, rz)
+                self.arith_lookup_exec(op_y, rz);
+            }
+            // Conditional RETs
+            (3, 0..=3, 0) => {
+
+            }
+            // Conditional JPs, some loads
+            (3, 0..=3, 2) => {
+                let nn = self.immediate_wide();
+                if self.condition_lookup(op_y) {
+                    self.pc.write_reg(nn);
+                }
             }
             //JP nn
             (3, 0, 3) => {
-                let nn = self.ram.read_word(self.pc.read_reg());
-                self.pc.write_reg(nn) // no need to inc pc because changed immediately
+                let nn = self.immediate_wide();
+                self.pc.write_reg(nn);
+            }
+            // CB
+            (3, 1, 3) => {
+                todo!()
+            }
+            // DI
+            (3, 6, 3) => {
+                self.ime = false;
+            }
+            // EI
+            (3, 7, 3) => {
+                self.ime = true;
+            }
+            // catch
+            (3, _, 3) => {
+                panic!("Removed instructions")
+            }
+            // conditional PUSH
+            (3, _, 4) => {
+                // removed instructions will result in panic at condition check
+                // fetch
+                let nn = self.immediate_wide();
+                // call
+                if self.condition_lookup(op_y){
+                    let pc = self.read_wide_reg(WideReg::PC);
+                    self.push_stack(pc);
+                    self.write_wide_reg(WideReg::PC, nn);
+                }
+            }
+            // PUSH, calls
+            (3, _, 5) => {
+                if op_q == 0 {
+                    let rp2_reg = self.read_wide_reg(CPU::wide_reg_lookup_2(op_p));
+                    self.push_stack(rp2_reg);
+                } else { // op_q == 1
+                    if op_p == 1 { // CALL nn
+                        // fetch
+                        let nn = self.immediate_wide();
+                        // call
+                        let pc = self.read_wide_reg(WideReg::PC);
+                        self.push_stack(pc);
+                        self.write_wide_reg(WideReg::PC, nn);
+                    } else {
+                        panic!("Invalid instruction")
+                    }
+                }
+            }
+            // Arithmetic, immediate
+            (3, _, 6) => {
+                //fetch
+                let n8 = self.immediate_narrow();
+                self.arith_lookup_exec(op_y, n8);
+            }
+            // ReSTart
+            (3, _, 7) => {
+                let p = op_y * 8;
+                let pc = self.read_wide_reg(WideReg::PC);
+                self.push_stack(pc);
+                self.write_wide_reg(WideReg::PC, p as u16);
             }
             _ => {
                 panic!("Missing Opcode {:#05o}", instruction);
@@ -417,7 +493,7 @@ impl CPU{
             0 => { // ADD
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let res = a_val.wrapping_add(number);
-                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::Z, (res == 0));
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, ((a_val & 0xF) + (number & 0xF)) > 0xF); // take lowest 4 bits, add, see if overflow
                 let carry_flag = ((a_val as u16 & 0xFF) + (number as u16 & 0xFF)) > 0xFF; //cast to u16 and similar as above
@@ -428,7 +504,7 @@ impl CPU{
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let c_bit = self.get_flag(Flag::C);
                 let res = a_val.wrapping_add(number).wrapping_add(c_bit as u8);
-                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::Z, (res == 0));
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, ((a_val & 0xF) + (number & 0xFF) + c_bit as u8) > 0xF); //as above
                 let carry_flag = ((a_val as u16 & 0xFF) + (number as u16 & 0xFF) + c_bit as u16) > 0xFF;
@@ -438,7 +514,7 @@ impl CPU{
             2 => { // SUB
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let res = a_val.wrapping_sub(number);
-                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::Z, (res == 0));
                 self.set_flag(Flag::N, true);
                 self.set_flag(Flag::H, (a_val & 0xF) < (number & 0xF)); //underflow simply if one is smaller than other
                 self.set_flag(Flag::C, a_val < number);
@@ -448,7 +524,7 @@ impl CPU{
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let c_bit = self.get_flag(Flag::C);
                 let res = a_val.wrapping_sub(number).wrapping_sub(c_bit as u8);
-                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::Z, (res == 0));
                 self.set_flag(Flag::N, true);
                 self.set_flag(Flag::H, (a_val & 0xF) < ((number & 0xF) + 1));
                 self.set_flag(Flag::C, (a_val as u16) < (number as u16 + c_bit as u16));
@@ -456,7 +532,7 @@ impl CPU{
             },
             4 => { // AND
                 let res = self.read_narrow_reg(NarrowReg::A) & number;
-                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::Z, (res == 0));
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, true);
                 self.set_flag(Flag::C, false);
@@ -464,7 +540,7 @@ impl CPU{
             },
             5 => { // XOR
                 let res = self.read_narrow_reg(NarrowReg::A) ^ number;
-                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::Z, (res == 0));
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, false);
                 self.set_flag(Flag::C, false);
@@ -472,7 +548,7 @@ impl CPU{
             },
             6 => { // OR
                 let res = self.read_narrow_reg(NarrowReg::A) | number;
-                self.set_flag(Flag::Z, if res == 0 {true} else {false});
+                self.set_flag(Flag::Z, (res == 0));
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, false);
                 self.set_flag(Flag::C, false);
@@ -487,6 +563,25 @@ impl CPU{
             },
             _ => panic!("Should not be reachable")
         }
+    }
+    fn immediate_narrow(&mut self) -> u8{
+        let curr_address = self.pc.read_reg();
+        self.pc.next_instruction();
+        self.ram.read_byte( curr_address)
+    }
+    fn immediate_wide(&mut self) -> u16{
+        let curr_address = self.pc.read_reg();
+        self.pc.next_instruction();
+        self.pc.next_instruction();
+        self.ram.read_word( curr_address)
+    }
+    fn push_stack(&mut self, nn: u16){
+        let mut sp = self.read_wide_reg(WideReg::SP);
+        sp = sp - 1;
+        self.ram.write_byte(sp, (nn >> 8) as u8);
+        sp = sp - 1;
+        self.ram.write_byte(sp, (nn & 0xFF) as u8);
+        self.write_wide_reg(WideReg::SP, sp);
     }
 }
 
