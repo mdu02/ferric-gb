@@ -290,7 +290,7 @@ impl CPU{
             (1, _, _) => {
                 let ry = CPU::reg_lookup(op_y);
                 let rz = CPU::reg_lookup(op_z);
-                self.write_narrow_reg(ry, CPU::read_narrow_reg(self, rz));
+                self.write_narrow_reg(ry, self.read_narrow_reg(rz));
             }
 
             //various arithmetic operations
