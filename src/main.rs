@@ -3,8 +3,8 @@ use crate::ram::RAM;
 use std::env::args;
 
 mod cpu;
-mod register;
 mod ram;
+mod register;
 
 fn main() {
     //initialize internals

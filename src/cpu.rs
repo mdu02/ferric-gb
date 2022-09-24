@@ -1,5 +1,5 @@
-use crate::register::Register;
 use crate::ram::RAM;
+use crate::register::Register;
 
 #[derive(Clone, Copy)]
 pub enum WideReg {
@@ -8,7 +8,7 @@ pub enum WideReg {
     DE,
     HL,
     SP,
-    PC
+    PC,
 }
 
 #[derive(Clone, Copy)]
@@ -20,14 +20,14 @@ pub enum NarrowReg {
     E,
     H,
     L,
-    HLInd //this is a pseudoregister that is a indirect of HL
+    HLInd, //this is a pseudoregister that is a indirect of HL
 }
 
 pub enum Flag {
     Z,
     N,
     H,
-    C
+    C,
 }
 
 pub struct CPU {
@@ -38,25 +38,29 @@ pub struct CPU {
     de: Register,
     hl: Register,
     sp: Register,
-    pc: Register
+    pc: Register,
 }
 
-impl CPU{
-    pub fn new(ram: RAM) -> CPU{
+impl CPU {
+    pub fn new(ram: RAM) -> CPU {
         let checksum_zero = ram.header_checksum == 0;
-        let mut cpu = CPU{
+        let mut cpu = CPU {
             ram,
             ime: false,
-            af: if checksum_zero {Register::new(0x01_80)} else {Register::new(0x01_B0)},
+            af: if checksum_zero {
+                Register::new(0x01_80)
+            } else {
+                Register::new(0x01_B0)
+            },
             bc: Register::new(0x0013),
             de: Register::new(0x00D8),
             hl: Register::new(0x014D),
             sp: Register::new(0xFFFE),
-            pc: Register::new(0x0100)
+            pc: Register::new(0x0100),
         };
         cpu
     }
-    pub fn cycle(&mut self){
+    pub fn cycle(&mut self) {
         //fetch
         let instruction = self.immediate_narrow();
 
@@ -70,47 +74,50 @@ impl CPU{
         let op_q = op_y % 2;
 
         //decode/exec
-        match (op_x, op_y, op_z){
+        match (op_x, op_y, op_z) {
             // NOP, does absolutely nothing
             (0, 0, 0) => {}
 
-            // LD (nn), SP load intermediate stack pointer
+            // LD (n16), SP load intermediate stack pointer
             (0, 1, 0) => {
                 //fetch
-                let nn = self.immediate_wide();
+                let n16 = self.immediate_wide();
                 let sp = self.read_wide_reg(WideReg::SP);
-                self.ram.write_byte(nn, (sp & 0xFF) as u8);
-                self.ram.write_byte(nn + 1, (sp >> 8) as u8);
+                self.ram.write_word(n16, sp);
             }
 
             // STOP
-            (0, 2, 0) => { todo!()}
+            (0, 2, 0) => {
+                todo!()
+            }
 
             // JR d
             (0, 3, 0) => {
                 //fetch
-                let e8 = self.immediate_narrow();
+                let e8 = self.immediate_narrow() as i8; // take as signed, cast to u16 and add
                 let pc = self.read_wide_reg(WideReg::PC);
-                self.write_wide_reg(WideReg::PC, pc + e8);
+                self.write_wide_reg(WideReg::PC, pc.wrapping_add(e8 as u16));
             }
 
             // JR condition, d
             (0, 4..=7, 0) => {
                 //fetch
-                let e8 = self.immediate_narrow();
+                let e8 = self.immediate_narrow() as i8; // as above
                 if self.condition_lookup(op_y - 4) {
                     let pc = self.read_wide_reg(WideReg::PC);
-                    self.write_wide_reg(WideReg::PC, pc + e8);
+                    self.write_wide_reg(WideReg::PC, pc.wrapping_add(e8 as u16));
                 }
             }
             // LD Wide and ADD HL
             (0, _, 1) => {
-                if op_q == 0 { // LD Wide
+                if op_q == 0 {
+                    // LD Wide
                     let reg = CPU::wide_reg_lookup_1(op_p);
                     //fetch
-                    let nn = self.immediate_wide();
-                    self.write_wide_reg(reg, nn);
-                } else { // ADD HL
+                    let n16 = self.immediate_wide();
+                    self.write_wide_reg(reg, n16);
+                } else {
+                    // ADD HL
                     let hl_val = self.read_wide_reg(WideReg::HL);
                     let reg = CPU::wide_reg_lookup_1(op_p);
                     let rpp = self.read_wide_reg(reg);
@@ -126,12 +133,8 @@ impl CPU{
             // Indirect Loads
             (0, _, 2) => {
                 let reg = match op_p {
-                    0 => {
-                        self.read_wide_reg(WideReg::BC)
-                    }
-                    1 => {
-                        self.read_wide_reg(WideReg::DE)
-                    }
+                    0 => self.read_wide_reg(WideReg::BC),
+                    1 => self.read_wide_reg(WideReg::DE),
                     2 => {
                         let reg_before = self.read_wide_reg(WideReg::HL);
                         self.write_wide_reg(WideReg::HL, reg_before.wrapping_add(1));
@@ -142,7 +145,7 @@ impl CPU{
                         self.write_wide_reg(WideReg::HL, reg_before.wrapping_sub(1));
                         reg_before
                     }
-                    _ => panic!("Should not be reachable")
+                    _ => panic!("Should not be reachable"),
                 };
                 if op_q == 0 {
                     let a_val = self.read_narrow_reg(NarrowReg::A);
@@ -155,11 +158,13 @@ impl CPU{
 
             // INC/DEC Wide
             (0, _, 3) => {
-                if op_q == 0 { //INC
+                if op_q == 0 {
+                    //INC
                     let reg = CPU::wide_reg_lookup_1(op_p);
                     let ry = self.read_wide_reg(reg);
                     self.write_wide_reg(reg, ry.wrapping_add(1));
-                } else { //DEC
+                } else {
+                    //DEC
                     let reg = CPU::wide_reg_lookup_1(op_p);
                     let ry = self.read_wide_reg(reg);
                     self.write_wide_reg(reg, ry.wrapping_sub(1));
@@ -207,14 +212,17 @@ impl CPU{
             (0, _, 6) => {
                 let reg = CPU::reg_lookup(op_y);
                 //fetch
-                let n = self.immediate_narrow();
-                self.write_narrow_reg(reg, n);
+                let n8 = self.immediate_narrow();
+                self.write_narrow_reg(reg, n8);
             }
 
             // RLCA, RotateLeftCarryA
             (0, 0, 7) => {
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let left_bit = (a_val & 0x80) != 0;
+                self.set_flag(Flag::Z, false);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
                 self.set_flag(Flag::C, left_bit);
                 self.write_narrow_reg(NarrowReg::A, (a_val << 1) + left_bit as u8);
             }
@@ -222,6 +230,9 @@ impl CPU{
             (0, 1, 7) => {
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let right_bit = (a_val & 1) != 0;
+                self.set_flag(Flag::Z, false);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
                 self.set_flag(Flag::C, right_bit);
                 self.write_narrow_reg(NarrowReg::A, (a_val >> 1) + (0x80 * right_bit as u8));
             }
@@ -229,6 +240,9 @@ impl CPU{
             (0, 2, 7) => {
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let c_bit = self.get_flag(Flag::C);
+                self.set_flag(Flag::Z, false);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
                 self.set_flag(Flag::C, (a_val & 0x80) != 0); // left bit to C
                 self.write_narrow_reg(NarrowReg::A, (a_val << 1) + c_bit as u8);
             }
@@ -236,6 +250,9 @@ impl CPU{
             (0, 3, 7) => {
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let c_bit = self.get_flag(Flag::C);
+                self.set_flag(Flag::Z, false);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
                 self.set_flag(Flag::C, (a_val & 1) != 0); // right bit to C
                 self.write_narrow_reg(NarrowReg::A, (a_val >> 1) + (0x80 * c_bit as u8));
             }
@@ -301,23 +318,134 @@ impl CPU{
             }
             // Conditional RETs
             (3, 0..=3, 0) => {
-
-            }
-            // Conditional JPs, some loads
-            (3, 0..=3, 2) => {
-                let nn = self.immediate_wide();
                 if self.condition_lookup(op_y) {
-                    self.pc.write_reg(nn);
+                    let ret_addr = self.pop_stack();
+                    self.write_wide_reg(WideReg::PC, ret_addr);
                 }
             }
-            //JP nn
+
+            // LDIO, RDIO
+            (3, 4 | 6, 0) => {
+                let io_port_addr = self.immediate_narrow() as u16 + 0xFF; // offset
+                if op_y == 4 {
+                    let a_val = self.read_narrow_reg(NarrowReg::A);
+                    self.ram.write_byte(io_port_addr, a_val);
+                } else {
+                    let io_port_val = self.ram.read_byte(io_port_addr);
+                    self.write_narrow_reg(NarrowReg::A, io_port_val);
+                }
+            }
+
+            // Add SP, e8
+            (3, 5 | 7, 0) => {
+                let e8 = self.immediate_narrow() as i8; // offset
+                let new_sp = (self.read_wide_reg(WideReg::SP)).wrapping_add(e8 as u16);
+                self.set_flag(Flag::Z, false);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, ((new_sp & 0xF) + ((e8 as u16) & 0xF)) > 0xF); // take lowest 4 bits, add, see if overflow
+                let carry_flag = ((new_sp & 0xFF) + ((e8 as u16) & 0xFF)) > 0xFF; //cast to u16 and similar as above
+                self.set_flag(Flag::C, carry_flag);
+                if op_y == 5 {
+                    self.write_wide_reg(WideReg::SP, new_sp);
+                } else {
+                    self.write_wide_reg(WideReg::HL, new_sp)
+                }
+            }
+
+            // POPs and various register loads
+            (3, _, 1) => {
+                if op_q == 0 {
+                    let reg = CPU::wide_reg_lookup_2(op_p);
+                    let popped_val = self.pop_stack();
+                    self.write_wide_reg(reg, popped_val);
+                } else {
+                    match op_p {
+                        0 => {
+                            let return_addr = self.pop_stack();
+                            self.write_wide_reg(WideReg::PC, return_addr);
+                        }
+                        1 => {
+                            let return_addr = self.pop_stack();
+                            self.write_wide_reg(WideReg::PC, return_addr);
+                            self.ime = true;
+                        }
+                        2 => {
+                            self.write_wide_reg(WideReg::PC, self.read_wide_reg(WideReg::HL));
+                        }
+                        3 => {
+                            self.write_wide_reg(WideReg::SP, self.read_wide_reg(WideReg::HL));
+                        }
+                        _ => {
+                            panic!("Shouldn't be reachable")
+                        }
+                    }
+                }
+            }
+
+            // Conditional JPs, some loads
+            (3, 0..=3, 2) => {
+                let n16 = self.immediate_wide();
+                if self.condition_lookup(op_y) {
+                    self.pc.write_reg(n16);
+                }
+            }
+            // more loads
+            (3, 4..=7, 2) => {
+                let addr = if (op_y % 2) == 0 {
+                    //4, 6
+                    self.read_narrow_reg(NarrowReg::C) as u16 + 0xFF00
+                } else {
+                    self.immediate_wide()
+                };
+                if op_y >= 6 {
+                    let val = self.ram.read_byte(addr);
+                    self.write_narrow_reg(NarrowReg::A, val);
+                } else {
+                    let a_val = self.read_narrow_reg(NarrowReg::A);
+                    self.ram.write_byte(addr, a_val);
+                }
+            }
+
+            //JP n16
             (3, 0, 3) => {
-                let nn = self.immediate_wide();
-                self.pc.write_reg(nn);
+                let n16 = self.immediate_wide();
+                self.pc.write_reg(n16);
             }
             // CB
             (3, 1, 3) => {
-                todo!()
+                let instruction = self.immediate_narrow();
+                //nibbles
+                let new_op_x = (instruction & 0o300) >> 6;
+                let new_op_y = (instruction & 0o070) >> 3;
+                let reg = CPU::reg_lookup(instruction & 0o007);
+                match new_op_x {
+                    0 => {
+                        self.rot_shift_lookup_exec(new_op_y, reg);
+                    }
+                    1 => {
+                        // test BIT
+                        let bitmask = (1 as u8) << new_op_y;
+                        let bit_set = (self.read_narrow_reg(reg) & bitmask) != 0;
+                        self.set_flag(Flag::Z, !bit_set);
+                        self.set_flag(Flag::N, false);
+                        self.set_flag(Flag::H, true);
+                    }
+                    2 => {
+                        // RESet bit
+                        let bitmask = !((1 as u8) << new_op_y);
+                        let set_val = self.read_narrow_reg(reg) & bitmask;
+                        self.write_narrow_reg(reg, set_val);
+                    }
+                    3 => {
+                        // SET bit
+                        let bitmask = (1 as u8) << new_op_y;
+                        let set_val = self.read_narrow_reg(reg) | bitmask;
+                        self.write_narrow_reg(reg, set_val);
+                    }
+                    _ => {
+                        panic!("op_x should only range from 0-3")
+                    }
+                }
             }
             // DI
             (3, 6, 3) => {
@@ -335,12 +463,12 @@ impl CPU{
             (3, _, 4) => {
                 // removed instructions will result in panic at condition check
                 // fetch
-                let nn = self.immediate_wide();
+                let n16 = self.immediate_wide();
                 // call
-                if self.condition_lookup(op_y){
+                if self.condition_lookup(op_y) {
                     let pc = self.read_wide_reg(WideReg::PC);
                     self.push_stack(pc);
-                    self.write_wide_reg(WideReg::PC, nn);
+                    self.write_wide_reg(WideReg::PC, n16);
                 }
             }
             // PUSH, calls
@@ -348,14 +476,16 @@ impl CPU{
                 if op_q == 0 {
                     let rp2_reg = self.read_wide_reg(CPU::wide_reg_lookup_2(op_p));
                     self.push_stack(rp2_reg);
-                } else { // op_q == 1
-                    if op_p == 1 { // CALL nn
+                } else {
+                    // op_q == 1
+                    if op_p == 1 {
+                        // CALL n16
                         // fetch
-                        let nn = self.immediate_wide();
+                        let n16 = self.immediate_wide();
                         // call
                         let pc = self.read_wide_reg(WideReg::PC);
                         self.push_stack(pc);
-                        self.write_wide_reg(WideReg::PC, nn);
+                        self.write_wide_reg(WideReg::PC, n16);
                     } else {
                         panic!("Invalid instruction")
                     }
@@ -379,8 +509,9 @@ impl CPU{
             }
         }
     }
-    fn read_narrow_reg(&self, reg: NarrowReg) -> u8{
-        match reg{
+
+    fn read_narrow_reg(&self, reg: NarrowReg) -> u8 {
+        match reg {
             NarrowReg::A => self.af.read_high(),
             NarrowReg::B => self.bc.read_high(),
             NarrowReg::C => self.bc.read_low(),
@@ -388,66 +519,107 @@ impl CPU{
             NarrowReg::E => self.de.read_low(),
             NarrowReg::H => self.hl.read_high(),
             NarrowReg::L => self.hl.read_low(),
-            NarrowReg::HLInd => self.ram.read_byte(self.hl.read_reg())
+            NarrowReg::HLInd => self.ram.read_byte(self.hl.read_reg()),
         }
     }
 
-    fn read_wide_reg(&self, reg: WideReg) -> u16{
-        match reg{
+    fn read_wide_reg(&self, reg: WideReg) -> u16 {
+        match reg {
             WideReg::AF => self.af.read_reg(),
             WideReg::BC => self.bc.read_reg(),
             WideReg::DE => self.de.read_reg(),
             WideReg::HL => self.hl.read_reg(),
             WideReg::SP => self.sp.read_reg(),
-            WideReg::PC => self.pc.read_reg()
+            WideReg::PC => self.pc.read_reg(),
         }
     }
 
-    fn write_narrow_reg(&mut self, reg: NarrowReg, val: u8){
-        match reg{
-            NarrowReg::A => {self.af.write_high(val);}
-            NarrowReg::B => {self.bc.write_high(val); }
-            NarrowReg::C => {self.bc.write_low(val);}
-            NarrowReg::D => {self.de.write_high(val);}
-            NarrowReg::E => {self.de.write_low(val);}
-            NarrowReg::H => {self.hl.write_high(val);}
-            NarrowReg::L => {self.hl.write_low(val);}
-            NarrowReg::HLInd => {self.ram.write_byte(self.hl.read_reg(), val);}
+    fn write_narrow_reg(&mut self, reg: NarrowReg, val: u8) {
+        match reg {
+            NarrowReg::A => {
+                self.af.write_high(val);
+            }
+            NarrowReg::B => {
+                self.bc.write_high(val);
+            }
+            NarrowReg::C => {
+                self.bc.write_low(val);
+            }
+            NarrowReg::D => {
+                self.de.write_high(val);
+            }
+            NarrowReg::E => {
+                self.de.write_low(val);
+            }
+            NarrowReg::H => {
+                self.hl.write_high(val);
+            }
+            NarrowReg::L => {
+                self.hl.write_low(val);
+            }
+            NarrowReg::HLInd => {
+                self.ram.write_byte(self.hl.read_reg(), val);
+            }
         }
     }
 
-    fn write_wide_reg(&mut self, reg: WideReg, val:u16){
-        match reg{
-            WideReg::AF => {self.af.write_reg(val);}
-            WideReg::BC => {self.bc.write_reg(val);}
-            WideReg::DE => {self.de.write_reg(val);}
-            WideReg::HL => {self.hl.write_reg(val);}
-            WideReg::SP => {self.sp.write_reg(val);}
-            WideReg::PC => {self.pc.write_reg(val);}
+    fn write_wide_reg(&mut self, reg: WideReg, val: u16) {
+        match reg {
+            WideReg::AF => {
+                self.af.write_reg(val);
+            }
+            WideReg::BC => {
+                self.bc.write_reg(val);
+            }
+            WideReg::DE => {
+                self.de.write_reg(val);
+            }
+            WideReg::HL => {
+                self.hl.write_reg(val);
+            }
+            WideReg::SP => {
+                self.sp.write_reg(val);
+            }
+            WideReg::PC => {
+                self.pc.write_reg(val);
+            }
         }
     }
 
-    fn get_flag(&self, f: Flag) -> bool{
-        match f{ //and with relevant bit
+    fn get_flag(&self, f: Flag) -> bool {
+        match f {
+            //and with relevant bit
             Flag::Z => (self.af.read_reg() & (1 << 7)) != 0,
             Flag::N => (self.af.read_reg() & (1 << 6)) != 0,
             Flag::H => (self.af.read_reg() & (1 << 5)) != 0,
-            Flag::C => (self.af.read_reg() & (1 << 4)) != 0
+            Flag::C => (self.af.read_reg() & (1 << 4)) != 0,
         }
     }
 
-    fn set_flag(&mut self, f : Flag, val: bool){
-        match f{
+    fn set_flag(&mut self, f: Flag, val: bool) {
+        match f {
             //bitmask out bit then and with boolean
-            Flag::Z => {self.af.write_reg(self.af.read_reg() & 0xFF7F | ((val as u16) << 7));}
-            Flag::N => {self.af.write_reg(self.af.read_reg() & 0xFFBF | ((val as u16) << 6));}
-            Flag::H => {self.af.write_reg(self.af.read_reg() & 0xFFDF | ((val as u16) << 5));}
-            Flag::C => {self.af.write_reg(self.af.read_reg() & 0xFFEF | ((val as u16) << 4));}
+            Flag::Z => {
+                self.af
+                    .write_reg(self.af.read_reg() & 0xFF7F | ((val as u16) << 7));
+            }
+            Flag::N => {
+                self.af
+                    .write_reg(self.af.read_reg() & 0xFFBF | ((val as u16) << 6));
+            }
+            Flag::H => {
+                self.af
+                    .write_reg(self.af.read_reg() & 0xFFDF | ((val as u16) << 5));
+            }
+            Flag::C => {
+                self.af
+                    .write_reg(self.af.read_reg() & 0xFFEF | ((val as u16) << 4));
+            }
         }
     }
 
-    fn reg_lookup(index: u8) -> NarrowReg{
-        match index{
+    fn reg_lookup(index: u8) -> NarrowReg {
+        match index {
             0 => NarrowReg::B,
             1 => NarrowReg::C,
             2 => NarrowReg::D,
@@ -456,132 +628,242 @@ impl CPU{
             5 => NarrowReg::L,
             6 => NarrowReg::HLInd,
             7 => NarrowReg::A,
-            _ => panic!("Should not be reachable")
+            _ => panic!("Should not be reachable"),
         }
     }
-    fn wide_reg_lookup_1(index: u8) -> WideReg{
-        match index{
+
+    fn wide_reg_lookup_1(index: u8) -> WideReg {
+        match index {
             0 => WideReg::BC,
             1 => WideReg::DE,
             2 => WideReg::HL,
             3 => WideReg::SP,
-            _ => panic!("Should not be reachable")
+            _ => panic!("Should not be reachable"),
         }
     }
-    fn wide_reg_lookup_2(index: u8) -> WideReg{
-        match index{
+
+    fn wide_reg_lookup_2(index: u8) -> WideReg {
+        match index {
             0 => WideReg::BC,
             1 => WideReg::DE,
             2 => WideReg::HL,
             3 => WideReg::AF,
-            _ => panic!("Should not be reachable")
+            _ => panic!("Should not be reachable"),
         }
     }
 
-    fn condition_lookup(&self, index: u8) -> bool{
-        match index{
+    fn condition_lookup(&self, index: u8) -> bool {
+        match index {
             0 => !(self.get_flag(Flag::Z)),
             1 => self.get_flag(Flag::Z),
             2 => !(self.get_flag(Flag::C)),
             3 => self.get_flag(Flag::C),
-            _ => panic!("Should not be reachable")
+            _ => panic!("Should not be reachable"),
         }
     }
 
-    fn arith_lookup_exec(&mut self, index: u8, number: u8){
-        match index{
-            0 => { // ADD
+    fn arith_lookup_exec(&mut self, index: u8, number: u8) {
+        match index {
+            0 => {
+                // ADD
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let res = a_val.wrapping_add(number);
-                self.set_flag(Flag::Z, (res == 0));
+                self.set_flag(Flag::Z, res == 0);
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, ((a_val & 0xF) + (number & 0xF)) > 0xF); // take lowest 4 bits, add, see if overflow
                 let carry_flag = ((a_val as u16 & 0xFF) + (number as u16 & 0xFF)) > 0xFF; //cast to u16 and similar as above
                 self.set_flag(Flag::C, carry_flag);
                 self.write_narrow_reg(NarrowReg::A, res);
-            },
-            1 => { // ADC
+            }
+            1 => {
+                // ADC
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let c_bit = self.get_flag(Flag::C);
                 let res = a_val.wrapping_add(number).wrapping_add(c_bit as u8);
-                self.set_flag(Flag::Z, (res == 0));
+                self.set_flag(Flag::Z, res == 0);
                 self.set_flag(Flag::N, false);
-                self.set_flag(Flag::H, ((a_val & 0xF) + (number & 0xFF) + c_bit as u8) > 0xF); //as above
-                let carry_flag = ((a_val as u16 & 0xFF) + (number as u16 & 0xFF) + c_bit as u16) > 0xFF;
+                self.set_flag(
+                    Flag::H,
+                    ((a_val & 0xF) + (number & 0xFF) + c_bit as u8) > 0xF,
+                ); //as above
+                let carry_flag =
+                    ((a_val as u16 & 0xFF) + (number as u16 & 0xFF) + c_bit as u16) > 0xFF;
                 self.set_flag(Flag::C, carry_flag);
                 self.write_narrow_reg(NarrowReg::A, res);
-            },
-            2 => { // SUB
+            }
+            2 => {
+                // SUB
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let res = a_val.wrapping_sub(number);
-                self.set_flag(Flag::Z, (res == 0));
+                self.set_flag(Flag::Z, res == 0);
                 self.set_flag(Flag::N, true);
                 self.set_flag(Flag::H, (a_val & 0xF) < (number & 0xF)); //underflow simply if one is smaller than other
                 self.set_flag(Flag::C, a_val < number);
                 self.write_narrow_reg(NarrowReg::A, res);
-            },
-            3 => { // SUBC
+            }
+            3 => {
+                // SUBC
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 let c_bit = self.get_flag(Flag::C);
                 let res = a_val.wrapping_sub(number).wrapping_sub(c_bit as u8);
-                self.set_flag(Flag::Z, (res == 0));
+                self.set_flag(Flag::Z, res == 0);
                 self.set_flag(Flag::N, true);
                 self.set_flag(Flag::H, (a_val & 0xF) < ((number & 0xF) + 1));
                 self.set_flag(Flag::C, (a_val as u16) < (number as u16 + c_bit as u16));
                 self.write_narrow_reg(NarrowReg::A, res);
-            },
-            4 => { // AND
+            }
+            4 => {
+                // AND
                 let res = self.read_narrow_reg(NarrowReg::A) & number;
-                self.set_flag(Flag::Z, (res == 0));
+                self.set_flag(Flag::Z, res == 0);
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, true);
                 self.set_flag(Flag::C, false);
                 self.write_narrow_reg(NarrowReg::A, res);
-            },
-            5 => { // XOR
+            }
+            5 => {
+                // XOR
                 let res = self.read_narrow_reg(NarrowReg::A) ^ number;
-                self.set_flag(Flag::Z, (res == 0));
+                self.set_flag(Flag::Z, res == 0);
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, false);
                 self.set_flag(Flag::C, false);
                 self.write_narrow_reg(NarrowReg::A, res);
-            },
-            6 => { // OR
+            }
+            6 => {
+                // OR
                 let res = self.read_narrow_reg(NarrowReg::A) | number;
-                self.set_flag(Flag::Z, (res == 0));
+                self.set_flag(Flag::Z, res == 0);
                 self.set_flag(Flag::N, false);
                 self.set_flag(Flag::H, false);
                 self.set_flag(Flag::C, false);
                 self.write_narrow_reg(NarrowReg::A, res);
-            },
-            7 => { // CP
+            }
+            7 => {
+                // CP
                 let a_val = self.read_narrow_reg(NarrowReg::A);
                 self.set_flag(Flag::Z, a_val == number);
                 self.set_flag(Flag::N, true);
                 self.set_flag(Flag::H, (a_val & 0xF) < (number & 0xF)); //underflow simply if one is smaller than other
                 self.set_flag(Flag::C, a_val < number);
-            },
-            _ => panic!("Should not be reachable")
+            }
+            _ => panic!("Should not be reachable"),
         }
     }
-    fn immediate_narrow(&mut self) -> u8{
+
+    //assortment of register shifts and rotations
+    fn rot_shift_lookup_exec(&mut self, index: u8, reg: NarrowReg) {
+        let reg_val = self.read_narrow_reg(reg);
+        match index {
+            // RLC, RotateLeftCarry
+            0 => {
+                let left_bit = (reg_val & 0x80) != 0;
+                self.set_flag(Flag::C, left_bit);
+                let res = (reg_val << 1) + left_bit as u8;
+                self.set_flag(Flag::Z, res == 0);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.write_narrow_reg(reg, res);
+            }
+            // RRC, RotateRightCarry
+            1 => {
+                let right_bit = (reg_val & 1) != 0;
+                self.set_flag(Flag::C, right_bit);
+                let res = (reg_val >> 1) + (0x80 * right_bit as u8);
+                self.set_flag(Flag::Z, res == 0);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.write_narrow_reg(reg, res);
+            }
+            // RL, RotateLeft
+            2 => {
+                let c_bit = self.get_flag(Flag::C);
+                self.set_flag(Flag::C, (reg_val & 0x80) != 0); // left bit to C
+                let res = (reg_val << 1) + c_bit as u8;
+                self.set_flag(Flag::Z, res == 0);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.write_narrow_reg(reg, res);
+            }
+            // RR, RotateRight
+            3 => {
+                let c_bit = self.get_flag(Flag::C);
+                self.set_flag(Flag::C, (reg_val & 1) != 0); // right bit to C
+                let res = (reg_val >> 1) + (0x80 * c_bit as u8);
+                self.set_flag(Flag::Z, res == 0);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.write_narrow_reg(reg, res);
+            }
+            // SLA, ShiftLeftArithmetic
+            4 => {
+                let left_bit = (reg_val & 0x80) != 0;
+                self.set_flag(Flag::C, left_bit);
+                let res = reg_val << 1;
+                self.set_flag(Flag::Z, res == 0);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.write_narrow_reg(reg, res);
+            }
+            // SRA, ShiftRightArithmetic
+            5 => {
+                let right_bit = (reg_val & 1) != 0;
+                self.set_flag(Flag::C, right_bit);
+                let res = (reg_val >> 1) + (reg_val & 0x80);
+                self.set_flag(Flag::Z, res == 0);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.write_narrow_reg(reg, res);
+            }
+            // SWAP, swaps upper and lower halfs
+            6 => {
+                self.set_flag(Flag::Z, reg_val == 0); //swapped must be the same as non swapped
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.set_flag(Flag::C, false);
+                let swapped = (reg_val >> 4) + (reg_val << 4);
+                self.write_narrow_reg(reg, swapped);
+            }
+            // ShiftRightLogic
+            7 => {
+                let right_bit = (reg_val & 1) != 0;
+                self.set_flag(Flag::C, right_bit);
+                let res = reg_val >> 1;
+                self.set_flag(Flag::Z, res == 0);
+                self.set_flag(Flag::N, false);
+                self.set_flag(Flag::H, false);
+                self.write_narrow_reg(reg, res);
+            }
+            _ => {
+                panic!("Should not be possible")
+            }
+        }
+    }
+
+    fn immediate_narrow(&mut self) -> u8 {
         let curr_address = self.pc.read_reg();
         self.pc.next_instruction();
-        self.ram.read_byte( curr_address)
+        self.ram.read_byte(curr_address)
     }
-    fn immediate_wide(&mut self) -> u16{
+
+    fn immediate_wide(&mut self) -> u16 {
         let curr_address = self.pc.read_reg();
         self.pc.next_instruction();
         self.pc.next_instruction();
-        self.ram.read_word( curr_address)
+        self.ram.read_word(curr_address)
     }
-    fn push_stack(&mut self, nn: u16){
+
+    fn push_stack(&mut self, n16: u16) {
         let mut sp = self.read_wide_reg(WideReg::SP);
-        sp = sp - 1;
-        self.ram.write_byte(sp, (nn >> 8) as u8);
-        sp = sp - 1;
-        self.ram.write_byte(sp, (nn & 0xFF) as u8);
+        sp = sp - 2;
+        self.ram.write_word(sp, n16);
         self.write_wide_reg(WideReg::SP, sp);
+    }
+
+    fn pop_stack(&mut self) -> u16 {
+        let sp = self.read_wide_reg(WideReg::SP);
+        self.write_wide_reg(WideReg::SP, sp + 2);
+        self.ram.read_word(sp)
     }
 }
 
@@ -590,8 +872,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_flags(){
-        let mut ram = RAM::new();
+    fn test_flags() {
+        let ram = RAM::new();
         let mut cpu = CPU::new(ram);
         cpu.set_flag(Flag::Z, true);
         cpu.set_flag(Flag::N, false);
@@ -604,7 +886,7 @@ mod tests {
     }
 
     #[test]
-    fn jp_nn_test() {
+    fn jp_n16_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o303);
         ram.write_byte(0x101, 0xDE);

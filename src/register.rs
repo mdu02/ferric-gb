@@ -1,5 +1,5 @@
 pub struct Register {
-    value: u16
+    value: u16,
 }
 
 // note that technically registers are stored little-endian in the z80
@@ -7,7 +7,7 @@ pub struct Register {
 // if this causes trouble in the future, please fix
 impl Register {
     pub fn new(value: u16) -> Register {
-        let mut reg: Register = Register{value};
+        let mut reg: Register = Register { value };
         reg
     }
 
@@ -34,33 +34,33 @@ impl Register {
     pub fn write_low(&mut self, val: u8) {
         self.value = self.value & 0xFF00 | (val as u16);
     }
-    pub fn next_instruction(&mut self) { //do i REALLY need to test this...
+
+    pub fn next_instruction(&mut self) {
+        //do i REALLY need to test this...
         self.value += 1;
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn read_write(){
+    fn read_write() {
         let mut reg = Register::new(0);
         reg.write_reg(0xABCD);
         assert_eq!(0xABCD, reg.read_reg());
     }
 
     #[test]
-    fn read_high_test(){
+    fn read_high_test() {
         let mut reg = Register::new(0);
         reg.write_reg(0xCA32);
         assert_eq!(0xCA, reg.read_high());
     }
 
     #[test]
-    fn write_high_test(){
+    fn write_high_test() {
         let mut reg = Register::new(0);
         reg.write_reg(0xC6E3);
         reg.write_high(0xA5);
@@ -68,18 +68,17 @@ mod tests {
     }
 
     #[test]
-    fn read_low_test(){
+    fn read_low_test() {
         let mut reg = Register::new(0);
         reg.write_reg(0x2032);
         assert_eq!(0x32, reg.read_low());
     }
 
     #[test]
-    fn write_low_test(){
+    fn write_low_test() {
         let mut reg = Register::new(0);
         reg.write_reg(0xE7C1);
         reg.write_low(0xA2);
         assert_eq!(0xE7A2, reg.read_reg());
     }
-
 }
