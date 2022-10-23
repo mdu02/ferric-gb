@@ -326,7 +326,7 @@ impl CPU {
 
             // LDIO, RDIO
             (3, 4 | 6, 0) => {
-                let io_port_addr = self.immediate_narrow() as u16 + 0xFF; // offset
+                let io_port_addr = self.immediate_narrow() as u16 + 0xFF00; // offset
                 if op_y == 4 {
                     let a_val = self.read_narrow_reg(NarrowReg::A);
                     self.ram.write_byte(io_port_addr, a_val);
@@ -478,7 +478,7 @@ impl CPU {
                     self.push_stack(rp2_reg);
                 } else {
                     // op_q == 1
-                    if op_p == 1 {
+                    if op_p == 0 {
                         // CALL n16
                         // fetch
                         let n16 = self.immediate_wide();
@@ -936,7 +936,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_wide_n16_test() {
+    fn ld_r16_n16_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o001);
         ram.write_word(0x101, 0xABCD);
@@ -946,7 +946,7 @@ mod tests {
     }
 
     #[test]
-    fn add_hl_wide_test() {
+    fn add_hl_r16_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o011);
         let mut cpu = CPU::new(ram);
@@ -957,7 +957,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_a_wide_ind_test() {
+    fn ld_a_r16_ind_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o012);
         ram.write_byte(0xC000, 0xAB);
@@ -968,7 +968,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_wide_ind_a_test() {
+    fn ld_r16_ind_a_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o042);
         let mut cpu = CPU::new(ram);
@@ -980,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn inc_wide_test() {
+    fn inc_r16_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o003);
         let mut cpu = CPU::new(ram);
@@ -990,7 +990,7 @@ mod tests {
     }
 
     #[test]
-    fn dec_wide_test() {
+    fn dec_r16_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o013);
         let mut cpu = CPU::new(ram);
@@ -1000,7 +1000,7 @@ mod tests {
     }
 
     #[test]
-    fn inc_narrow_test() {
+    fn inc_r8_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o004);
         let mut cpu = CPU::new(ram);
@@ -1016,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn dec_narrow_test() {
+    fn dec_r8_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o005);
         let mut cpu = CPU::new(ram);
@@ -1032,7 +1032,7 @@ mod tests {
     }
 
     #[test]
-    fn ld_narrow_test() {
+    fn ld_r8_n8_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o006);
         ram.write_byte(0x101, 0xAB);
@@ -1088,6 +1088,37 @@ mod tests {
         assert_eq!(true, cpu.get_flag(Flag::C));
         assert_eq!(0b01010001, cpu.read_narrow_reg(NarrowReg::A));
     }
+
+    #[test]
+    fn daa_add_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o306);
+        ram.write_byte(0x101, 0x25);
+        ram.write_byte(0x102, 0o047);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x89);
+        cpu.set_flag(Flag::C, false);
+        cpu.cycle();
+        cpu.cycle();
+        assert_eq!(true, cpu.get_flag(Flag::C));
+        assert_eq!(0x14, cpu.read_narrow_reg(NarrowReg::A));
+    }
+
+    #[test]
+    fn daa_sub_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o326);
+        ram.write_byte(0x101, 0x25);
+        ram.write_byte(0x102, 0o047);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0x89);
+        cpu.set_flag(Flag::C, false);
+        cpu.cycle();
+        cpu.cycle();
+        assert_eq!(false, cpu.get_flag(Flag::C));
+        assert_eq!(0x64, cpu.read_narrow_reg(NarrowReg::A));
+    }
+
     #[test]
     fn cpl_test() {
         let mut ram = RAM::new();
@@ -1128,7 +1159,7 @@ mod tests {
 
 
     #[test]
-    fn ld_reg_test() {
+    fn ld_r8_r8_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o101);
         let mut cpu = CPU::new(ram);
@@ -1140,7 +1171,7 @@ mod tests {
 
 
     #[test]
-    fn add_reg_test() {
+    fn add_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o201);
         let mut cpu = CPU::new(ram);
@@ -1169,7 +1200,7 @@ mod tests {
         assert_eq!(0x10, cpu.read_narrow_reg(NarrowReg::A));
     }
     #[test]
-    fn sub_reg_test() {
+    fn sub_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o221);
         let mut cpu = CPU::new(ram);
@@ -1270,11 +1301,135 @@ mod tests {
     }
 
     #[test]
+    fn ret_cc_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o315);
+        ram.write_word(0x101, 0x200);
+        ram.write_byte(0x200, 0o320);
+        let mut cpu = CPU::new(ram);
+        cpu.set_flag(Flag::Z, true);
+        cpu.cycle();
+        cpu.cycle();
+        assert_eq!(0x103, cpu.read_wide_reg(WideReg::PC));
+    }
+
+    #[test]
+    fn ld_io_a_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o340);
+        ram.write_byte(0x101, 0x12);
+        let mut cpu = CPU::new(ram);
+        cpu.write_narrow_reg(NarrowReg::A, 0xBD);
+        cpu.cycle();
+        assert_eq!(0xBD, cpu.ram.read_byte(0xFF12));
+    }
+
+    #[test]
+    fn add_sp_e8_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o350);
+        ram.write_byte(0x101, 0xFF); //-1
+        let mut cpu = CPU::new(ram);
+        cpu.cycle();
+        assert_eq!(0xFFFD, cpu.read_wide_reg(WideReg::SP));
+    }
+
+    #[test]
+    fn ld_a_io_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o360);
+        ram.write_byte(0x101, 0x12);
+        ram.write_byte(0xFF12, 0xBD);
+        let mut cpu = CPU::new(ram);
+        cpu.cycle();
+        assert_eq!(0xBD, cpu.read_narrow_reg(NarrowReg::A));
+    }
+
+    #[test]
+    fn ld_hl_sp_plus_e8_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o370);
+        ram.write_byte(0x101, 0xFF); //-1
+        ram.write_byte(0xFFFD, 0xDA);
+        let mut cpu = CPU::new(ram);
+        cpu.cycle();
+        assert_eq!(0xFFFD, cpu.read_wide_reg(WideReg::HL));
+    }
+
+    #[test]
+    fn pop_r16_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o315);
+        ram.write_word(0x101, 0x200);
+        ram.write_byte(0x200, 0o301);
+        let mut cpu = CPU::new(ram);
+        cpu.cycle();
+        cpu.cycle();
+        assert_eq!(0x103, cpu.read_wide_reg(WideReg::BC));
+    }
+
+    #[test]
+    fn ret_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o315);
+        ram.write_word(0x101, 0x200);
+        ram.write_byte(0x200, 0o311);
+        let mut cpu = CPU::new(ram);
+        cpu.cycle();
+        cpu.cycle();
+        assert_eq!(0x103, cpu.read_wide_reg(WideReg::PC));
+    }
+
+    #[test]
+    fn reti_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o315);
+        ram.write_word(0x101, 0x200);
+        ram.write_byte(0x200, 0o331);
+        let mut cpu = CPU::new(ram);
+        cpu.cycle();
+        cpu.cycle();
+        assert_eq!(0x103, cpu.read_wide_reg(WideReg::PC));
+        assert_eq!(true, cpu.ime);
+    }
+
+    #[test]
+    fn jp_hl_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o351);
+        let mut cpu = CPU::new(ram);
+        cpu.write_wide_reg(WideReg::HL, 0xBADC);
+        cpu.cycle();
+        assert_eq!(0xBADC, cpu.read_wide_reg(WideReg::PC));
+    }
+
+    #[test]
+    fn ld_sp_hl_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o371);
+        let mut cpu = CPU::new(ram);
+        cpu.write_wide_reg(WideReg::HL, 0xBADC);
+        cpu.cycle();
+        assert_eq!(0xBADC, cpu.read_wide_reg(WideReg::SP));
+    }
+
+    #[test]
+    fn jp_cc_n16_test() {
+        let mut ram = RAM::new();
+        ram.write_byte(0x100, 0o312);
+        ram.write_word(0x101, 0xEAFD);
+        let mut cpu = CPU::new(ram);
+        cpu.set_flag(Flag::Z, true);
+        cpu.cycle();
+        assert_eq!(0xEAFD, cpu.read_wide_reg(WideReg::PC));
+    }
+
+
+    #[test]
     fn jp_n16_test() {
         let mut ram = RAM::new();
         ram.write_byte(0x100, 0o303);
-        ram.write_byte(0x101, 0xDE);
-        ram.write_byte(0x102, 0xAC);
+        ram.write_word(0x101, 0xACDE);
         let mut cpu = CPU::new(ram);
         cpu.cycle();
         assert_eq!(0xACDE, cpu.pc.read_reg());
