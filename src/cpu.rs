@@ -32,6 +32,7 @@ pub enum Flag {
 
 pub struct CPU {
     ram: RAM,
+    clock: u8,
     ime: bool,
     af: Register,
     bc: Register,
@@ -44,8 +45,9 @@ pub struct CPU {
 impl CPU {
     pub fn new(ram: RAM) -> CPU {
         let checksum_zero = ram.header_checksum == 0;
-        let mut cpu = CPU {
+        let cpu = CPU {
             ram,
+            clock: 0,
             ime: false,
             af: if checksum_zero {
                 Register::new(0x01_80)
@@ -61,6 +63,8 @@ impl CPU {
         cpu
     }
     pub fn cycle(&mut self) {
+        // tick clock, since every instr is at least one clock cycle
+
         //fetch
         let instruction = self.immediate_narrow();
 
@@ -510,7 +514,7 @@ impl CPU {
         }
     }
 
-    fn read_narrow_reg(&self, reg: NarrowReg) -> u8 {
+    fn read_narrow_reg(&mut self, reg: NarrowReg) -> u8 {
         match reg {
             NarrowReg::A => self.af.read_high(),
             NarrowReg::B => self.bc.read_high(),
@@ -519,7 +523,10 @@ impl CPU {
             NarrowReg::E => self.de.read_low(),
             NarrowReg::H => self.hl.read_high(),
             NarrowReg::L => self.hl.read_low(),
-            NarrowReg::HLInd => self.ram.read_byte(self.hl.read_reg()),
+            NarrowReg::HLInd => {
+                self.tick_clock();
+                self.ram.read_byte(self.hl.read_reg())
+            },
         }
     }
 
@@ -558,6 +565,7 @@ impl CPU {
                 self.hl.write_low(val);
             }
             NarrowReg::HLInd => {
+                self.tick_clock();
                 self.ram.write_byte(self.hl.read_reg(), val);
             }
         }
@@ -868,6 +876,14 @@ impl CPU {
 
     fn add_as_signed(unsigned: u16, signed: u8) -> u16 {
         unsigned.wrapping_add((signed as i8) as u16)
+    }
+
+    fn tick_clock(&mut self) {
+        self.clock += 1;
+    }
+
+    fn reset_clock(&mut self) {
+        self.clock = 0;
     }
 }
 
